@@ -2,38 +2,68 @@ package queryx
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/stretchr/testify/require"
 )
 
-type User struct {
-	Id   int64  `db:"id"`
-	Name string `db:"name"`
-	Age  int    `db:"age"`
+func TestInsertBuilder(t *testing.T) {
+	db := getDb()
+
+	t.Run("insert with columns and values", func(t *testing.T) {
+		buf := NewBuffer()
+		err := db.InsertInto("users").
+			Columns("name", "age").
+			Values("a", 1).
+			Values("b", 2).
+			Values("c", 3).
+			Returning("id", "name", "age").
+			Build(buf)
+		require.NoError(t, err)
+		require.Equal(t, `INSERT INTO "users" ("name","age") VALUES (?,?), (?,?), (?,?) RETURNING "id","name","age"`, buf.String())
+		require.Equal(t, []interface{}{"a", 1, "b", 2, "c", 3}, buf.Value())
+	})
+
+	t.Run("insert with pair", func(t *testing.T) {
+		buf := NewBuffer()
+		err := db.InsertInto("users").
+			Pair("name", "a").
+			Pair("age", 1).
+			Build(buf)
+		require.NoError(t, err)
+		require.Equal(t, `INSERT INTO "users" ("name","age") VALUES (?,?)`, buf.String())
+		require.Equal(t, []interface{}{"a", 1}, buf.Value())
+	})
+
+	t.Run("insert with record", func(t *testing.T) {
+		buf := NewBuffer()
+		user := User{
+			Name: "a",
+			Age:  1,
+		}
+		err := db.InsertInto("users").Columns("name", "age").Record(&user).Build(buf)
+		require.NoError(t, err)
+		require.Equal(t, `INSERT INTO "users" ("name","age") VALUES (?,?)`, buf.String())
+		require.Equal(t, []interface{}{"a", 1}, buf.Value())
+	})
 }
 
 func TestInsert(t *testing.T) {
 	db := getDb()
-
-	user := User{
-		Name: "John",
-		Age:  20,
-	}
 	ctx := context.Background()
-	db.InsertInto("users").
-		Record(user).
-		Returning("id").
-		Exec(ctx)
-}
 
-func getDb() Queryx {
-	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
-	}
-	return New(conn)
+	var ids []int64
+	err := db.InsertInto("users").
+		Columns("name", "age").
+		Values("a", 1).
+		Values("b", 2).
+		Returning("id").
+		Load(ctx, &ids)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, len(ids))
+
+	var count Count
+	db.Select("COUNT(*)").From("users").LoadOne(ctx, &count)
+	require.Equal(t, 2, count.Count)
 }

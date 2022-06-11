@@ -30,7 +30,7 @@ type queryx struct {
 }
 
 // creates a new Queryx instance
-func New(conn *pgx.Conn) Queryx {
+func New(conn runner) Queryx {
 	return &queryx{conn: conn}
 }
 
@@ -89,9 +89,11 @@ func query(ctx context.Context, conn runner, builder Builder, dest interface{}) 
 	if err != nil {
 		return 0, err
 	}
+	// err = pgxscan.ScanAll(dest, rows)
+
 	count, err := Load(rows, dest)
 	if err != nil {
 		return 0, err
 	}
-	return count, nil
+	return count, err
 }

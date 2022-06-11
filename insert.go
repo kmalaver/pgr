@@ -18,7 +18,8 @@ type InsertBuilder struct {
 
 func (db queryx) InsertInto(table string) *InsertBuilder {
 	return &InsertBuilder{
-		Table: table,
+		Table:  table,
+		runner: db.conn,
 	}
 }
 
@@ -28,6 +29,7 @@ func (db queryx) InsertSql(query string, value ...interface{}) *InsertBuilder {
 			Query: query,
 			Value: value,
 		},
+		runner: db.conn,
 	}
 }
 
@@ -64,7 +66,6 @@ func (b *InsertBuilder) Record(record interface{}) *InsertBuilder {
 
 	if v.Kind() == reflect.Struct {
 		found := make([]interface{}, len(b.Column)+1)
-		// ID is recommended by golint here
 		s := newTagStore()
 		s.findValueByName(v, append(b.Column, "id"), found, false)
 
@@ -90,6 +91,11 @@ func (b *InsertBuilder) Exec(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+func (b *InsertBuilder) Load(ctx context.Context, value interface{}) error {
+	_, err := query(ctx, b.runner, b, value)
+	return err
 }
 
 func (b *InsertBuilder) Build(buf Buffer) error {
