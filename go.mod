@@ -1,4 +1,4 @@
-module pgr
+module github.com/kmalaver/pgr
 
 go 1.18
 
