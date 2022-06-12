@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 import (
 	"context"
@@ -10,8 +10,8 @@ type contextKey string
 
 const transactionKey contextKey = "transaction"
 
-func (db *queryx) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	return db.BeginFunc(ctx, func(tx pgx.Tx) error {
+func (db *Pgr) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	return db.conn.BeginFunc(ctx, func(tx pgx.Tx) error {
 		ctx = setTransaction(ctx, tx)
 		return fn(ctx)
 	})

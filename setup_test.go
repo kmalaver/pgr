@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 import (
 	"context"
@@ -10,7 +10,8 @@ import (
 
 const DB_URL = "postgres://postgres:postgres@localhost:5432/postgres"
 
-func getDb() Queryx {
+// executes operations in a transaction and rolls back the changes
+func getDb() *Pgr {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, DB_URL)
 	if err != nil {
@@ -22,7 +23,12 @@ func getDb() Queryx {
 		fmt.Fprintf(os.Stderr, "Error starting transaction: %v\n", err)
 		os.Exit(1)
 	}
-	return New(tx)
+	pgr, err := New(tx, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating Pgr: %v\n", err)
+		os.Exit(1)
+	}
+	return pgr
 }
 
 type User struct {

@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 import (
 	"context"
@@ -7,49 +7,50 @@ import (
 )
 
 type InsertBuilder struct {
-	runner runner
+	db *Pgr
 	raw
-	Table        string
-	Column       []string
-	Value        [][]interface{}
-	ReturnColumn []string
-	Ignored      bool
+
+	table        string
+	columns      []string
+	returnColumn []string
+	values       [][]interface{}
+	ignored      bool
 }
 
-func (db queryx) InsertInto(table string) *InsertBuilder {
+func (db *Pgr) InsertInto(table string) *InsertBuilder {
 	return &InsertBuilder{
-		Table:  table,
-		runner: db,
+		table: table,
+		db:    db,
 	}
 }
 
-func (db queryx) InsertSql(query string, value ...interface{}) *InsertBuilder {
+func (db *Pgr) InsertSql(query string, value ...interface{}) *InsertBuilder {
 	return &InsertBuilder{
 		raw: raw{
 			Query: query,
 			Value: value,
 		},
-		runner: db,
+		db: db,
 	}
 }
 
 func (b *InsertBuilder) Columns(columns ...string) *InsertBuilder {
-	b.Column = columns
+	b.columns = columns
 	return b
 }
 
 func (b *InsertBuilder) Values(values ...interface{}) *InsertBuilder {
-	b.Value = append(b.Value, values)
+	b.values = append(b.values, values)
 	return b
 }
 
 func (b *InsertBuilder) Pair(column string, value interface{}) *InsertBuilder {
-	b.Column = append(b.Column, column)
-	switch len(b.Value) {
+	b.columns = append(b.columns, column)
+	switch len(b.values) {
 	case 0:
 		b.Values(value)
 	case 1:
-		b.Value[0] = append(b.Value[0], value)
+		b.values[0] = append(b.values[0], value)
 	default:
 		panic("pair only allows one record to insert")
 	}
@@ -57,12 +58,11 @@ func (b *InsertBuilder) Pair(column string, value interface{}) *InsertBuilder {
 }
 
 func (b *InsertBuilder) Returning(columns ...string) *InsertBuilder {
-	b.ReturnColumn = columns
+	b.returnColumn = columns
 	return b
 }
 
-// If there is a field called "Id" or "ID" in the struct,
-// it will be set to LastInsertId.
+// Record is a helper function to insert a single record. using a struct as the value.
 //
 // If no Columns are specified, the columns will be set by the
 // struct fields excluding non exported fields.
@@ -72,24 +72,25 @@ func (b *InsertBuilder) Record(record interface{}) *InsertBuilder {
 	if v.Kind() == reflect.Struct {
 		s := newTagStore()
 
-		// We still have no columns specified
-		// Use the struct fields excluding non exported fields
-		if len(b.Column) == 0 {
+		// if no columns are specified, use the struct fields
+		if len(b.columns) == 0 {
 			fields := s.get(v.Type())
 			for i, field := range fields {
 				if field == "id" {
+					// skip id field
 					if idField := v.Field(i); idField.IsZero() {
 						continue
 					}
 				}
 				if field != "" {
-					b.Column = append(b.Column, field)
+					b.columns = append(b.columns, field)
 				}
 			}
 		}
 
-		found := make([]interface{}, len(b.Column)+1)
-		s.findValueByName(v, append(b.Column, "id"), found, false)
+		// TODO: check this code
+		found := make([]interface{}, len(b.columns)+1)
+		s.findValueByName(v, append(b.columns, "id"), found, false)
 
 		value := found[:len(found)-1]
 		for i, v := range value {
@@ -103,20 +104,16 @@ func (b *InsertBuilder) Record(record interface{}) *InsertBuilder {
 }
 
 func (b *InsertBuilder) Ignore() *InsertBuilder {
-	b.Ignored = true
+	b.ignored = true
 	return b
 }
 
 func (b *InsertBuilder) Exec(ctx context.Context) (int64, error) {
-	result, err := exec(ctx, b.runner, b)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	return b.db.exec(ctx, b)
 }
 
-func (b *InsertBuilder) Load(ctx context.Context, value interface{}) error {
-	_, err := query(ctx, b.runner, b, value)
+func (b *InsertBuilder) Load(ctx context.Context, dest interface{}) error {
+	_, err := b.db.query(ctx, b, dest)
 	return err
 }
 
@@ -125,26 +122,26 @@ func (b *InsertBuilder) Build(buf Buffer) error {
 		return b.raw.Build(buf)
 	}
 
-	if b.Table == "" {
+	if b.table == "" {
 		return ErrTableNotSpecified
 	}
 
-	if len(b.Column) == 0 {
+	if len(b.columns) == 0 {
 		return ErrColumnNotSpecified
 	}
 
-	if b.Ignored {
+	if b.ignored {
 		buf.WriteString("INSERT IGNORE INTO ")
 	} else {
 		buf.WriteString("INSERT INTO ")
 	}
 
-	buf.WriteString(QuoteIdent(b.Table))
+	buf.WriteString(QuoteIdent(b.table))
 
 	var placeholderBuf strings.Builder
 	placeholderBuf.WriteString("(")
 	buf.WriteString(" (")
-	for i, col := range b.Column {
+	for i, col := range b.columns {
 		if i > 0 {
 			buf.WriteString(",")
 			placeholderBuf.WriteString(",")
@@ -158,7 +155,7 @@ func (b *InsertBuilder) Build(buf Buffer) error {
 	placeholderBuf.WriteString(")")
 	placeholderStr := placeholderBuf.String()
 
-	for i, tuple := range b.Value {
+	for i, tuple := range b.values {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
@@ -167,9 +164,9 @@ func (b *InsertBuilder) Build(buf Buffer) error {
 		buf.WriteValue(tuple...)
 	}
 
-	if len(b.ReturnColumn) > 0 {
+	if len(b.returnColumn) > 0 {
 		buf.WriteString(" RETURNING ")
-		for i, col := range b.ReturnColumn {
+		for i, col := range b.returnColumn {
 			if i > 0 {
 				buf.WriteString(",")
 			}

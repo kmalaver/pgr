@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 // I is quoted identifier
 

@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 import (
 	"context"
@@ -8,24 +8,22 @@ import (
 )
 
 type SelectBuilder struct {
-	runner runner
-	logger Logger
+	db *Pgr
 	raw
 
-	IsDistinct bool
+	distinct bool
 
-	Column    []interface{}
-	Table     interface{}
-	JoinTable []Builder
+	columns    []interface{}
+	table      interface{}
+	joinTables []Builder
 
-	WhereCond  []Builder
-	Group      []Builder
-	HavingCond []Builder
-	Order      []Builder
-	Suffixes   []Builder
+	whereCond  []Builder
+	group      []Builder
+	havingCond []Builder
+	order      []Builder
 
-	LimitCount  int64
-	OffsetCount int64
+	limitCount  int64
+	offsetCount int64
 }
 
 func prepareSelect(a []string) []interface{} {
@@ -39,41 +37,42 @@ func prepareSelect(a []string) []interface{} {
 // Select creates a SelectBuilder.
 func Select(cols ...interface{}) *SelectBuilder {
 	return &SelectBuilder{
-		Column:      cols,
-		LimitCount:  -1,
-		OffsetCount: -1,
+		columns:     cols,
+		limitCount:  -1,
+		offsetCount: -1,
 	}
 }
 
-func (db *queryx) Select(cols ...string) *SelectBuilder {
+// Select creates a SelectBuilder.
+func (db *Pgr) Select(cols ...string) *SelectBuilder {
 	b := Select(prepareSelect(cols)...)
-	b.runner = db
-	b.logger = db.logger
+	b.db = db
 	return b
 }
 
-func (db *queryx) SelectSql(query string, value ...interface{}) *SelectBuilder {
+// SelectSql creates a SelectBuilder with raw SQL.
+func (db *Pgr) SelectSql(query string, value ...interface{}) *SelectBuilder {
 	return &SelectBuilder{
 		raw: raw{
 			Query: query,
 			Value: value,
 		},
-		LimitCount:  -1,
-		OffsetCount: -1,
-		runner:      db,
-		logger:      db.logger,
+		limitCount:  -1,
+		offsetCount: -1,
+		db:          db,
 	}
 }
 
 // From specifies table to select from.
-// table can be Builder like SelectBuilder, or string.
+// table can be Builder or string.
 func (b *SelectBuilder) From(table interface{}) *SelectBuilder {
-	b.Table = table
+	b.table = table
 	return b
 }
 
+// Distinct adds DISTINCT clause.
 func (b *SelectBuilder) Distinct() *SelectBuilder {
-	b.IsDistinct = true
+	b.distinct = true
 	return b
 }
 
@@ -82,9 +81,9 @@ func (b *SelectBuilder) Distinct() *SelectBuilder {
 func (b *SelectBuilder) Where(query interface{}, value ...interface{}) *SelectBuilder {
 	switch query := query.(type) {
 	case string:
-		b.WhereCond = append(b.WhereCond, Expr(query, value...))
+		b.whereCond = append(b.whereCond, Expr(query, value...))
 	case Builder:
-		b.WhereCond = append(b.WhereCond, query)
+		b.whereCond = append(b.whereCond, query)
 	}
 	return b
 }
@@ -94,9 +93,9 @@ func (b *SelectBuilder) Where(query interface{}, value ...interface{}) *SelectBu
 func (b *SelectBuilder) Having(query interface{}, value ...interface{}) *SelectBuilder {
 	switch query := query.(type) {
 	case string:
-		b.HavingCond = append(b.HavingCond, Expr(query, value...))
+		b.havingCond = append(b.havingCond, Expr(query, value...))
 	case Builder:
-		b.HavingCond = append(b.HavingCond, query)
+		b.havingCond = append(b.havingCond, query)
 	}
 	return b
 }
@@ -104,40 +103,36 @@ func (b *SelectBuilder) Having(query interface{}, value ...interface{}) *SelectB
 // GroupBy specifies columns for grouping.
 func (b *SelectBuilder) GroupBy(col ...string) *SelectBuilder {
 	for _, group := range col {
-		b.Group = append(b.Group, Expr(group))
+		b.group = append(b.group, Expr(group))
 	}
 	return b
 }
 
+// OrderAsc adds a column to the ORDER BY clause.
 func (b *SelectBuilder) OrderAsc(col string) *SelectBuilder {
-	b.Order = append(b.Order, order(col, asc))
+	b.order = append(b.order, order(col, asc))
 	return b
 }
 
+// OrderDesc adds a column to the ORDER BY clause.
 func (b *SelectBuilder) OrderDesc(col string) *SelectBuilder {
-	b.Order = append(b.Order, order(col, desc))
+	b.order = append(b.order, order(col, desc))
 	return b
 }
 
 // OrderBy specifies columns for ordering.
 func (b *SelectBuilder) OrderBy(col string) *SelectBuilder {
-	b.Order = append(b.Order, Expr(col))
+	b.order = append(b.order, Expr(col))
 	return b
 }
 
 func (b *SelectBuilder) Limit(n uint64) *SelectBuilder {
-	b.LimitCount = int64(n)
+	b.limitCount = int64(n)
 	return b
 }
 
 func (b *SelectBuilder) Offset(n uint64) *SelectBuilder {
-	b.OffsetCount = int64(n)
-	return b
-}
-
-// Suffix adds an expression to the end of the query. This is useful to add dialect-specific clauses like FOR UPDATE
-func (b *SelectBuilder) Suffix(suffix string, value ...interface{}) *SelectBuilder {
-	b.Suffixes = append(b.Suffixes, Expr(suffix, value...))
+	b.offsetCount = int64(n)
 	return b
 }
 
@@ -158,31 +153,31 @@ func (b *SelectBuilder) OrderDir(col string, isAsc bool) *SelectBuilder {
 	return b
 }
 
-// Join add inner-join.
+// Join add inner join.
 // on can be Builder or string.
 func (b *SelectBuilder) Join(table, on interface{}) *SelectBuilder {
-	b.JoinTable = append(b.JoinTable, join(inner, table, on))
+	b.joinTables = append(b.joinTables, join(inner, table, on))
 	return b
 }
 
-// LeftJoin add left-join.
+// LeftJoin add left join.
 // on can be Builder or string.
 func (b *SelectBuilder) LeftJoin(table, on interface{}) *SelectBuilder {
-	b.JoinTable = append(b.JoinTable, join(left, table, on))
+	b.joinTables = append(b.joinTables, join(left, table, on))
 	return b
 }
 
-// RightJoin add right-join.
+// RightJoin add right join.
 // on can be Builder or string.
 func (b *SelectBuilder) RightJoin(table, on interface{}) *SelectBuilder {
-	b.JoinTable = append(b.JoinTable, join(right, table, on))
+	b.joinTables = append(b.joinTables, join(right, table, on))
 	return b
 }
 
-// FullJoin add full-join.
+// FullJoin add full join.
 // on can be Builder or string.
 func (b *SelectBuilder) FullJoin(table, on interface{}) *SelectBuilder {
-	b.JoinTable = append(b.JoinTable, join(full, table, on))
+	b.joinTables = append(b.joinTables, join(full, table, on))
 	return b
 }
 
@@ -191,13 +186,15 @@ func (b *SelectBuilder) As(alias string) Builder {
 	return as(b, alias)
 }
 
+// Rows executes the query and returns a Rows object.
 func (b *SelectBuilder) Rows(ctx context.Context) (pgx.Rows, error) {
-	_, rows, err := queryRows(ctx, b.runner, b, b.logger)
+	_, rows, err := b.db.queryRows(ctx, b)
 	return rows, err
 }
 
-func (b *SelectBuilder) LoadOne(ctx context.Context, value interface{}) error {
-	count, err := query(ctx, b.runner, b, value, b.logger)
+// LoadOne executes the query and loads one record into given struct.
+func (b *SelectBuilder) LoadOne(ctx context.Context, dest interface{}) error {
+	count, err := b.db.query(ctx, b, dest)
 	if err != nil {
 		return err
 	}
@@ -207,8 +204,9 @@ func (b *SelectBuilder) LoadOne(ctx context.Context, value interface{}) error {
 	return nil
 }
 
-func (b *SelectBuilder) Load(ctx context.Context, value interface{}) (int, error) {
-	return query(ctx, b.runner, b, value, b.logger)
+// Load executes the query and loads all records into given struct.
+func (b *SelectBuilder) Load(ctx context.Context, dest interface{}) (int, error) {
+	return b.db.query(ctx, b, dest)
 }
 
 func (b *SelectBuilder) Build(buf Buffer) error {
@@ -216,17 +214,17 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 		return b.raw.Build(buf)
 	}
 
-	if len(b.Column) == 0 {
+	if len(b.columns) == 0 {
 		return ErrColumnNotSpecified
 	}
 
 	buf.WriteString("SELECT ")
 
-	if b.IsDistinct {
+	if b.distinct {
 		buf.WriteString("DISTINCT ")
 	}
 
-	for i, col := range b.Column {
+	for i, col := range b.columns {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
@@ -239,9 +237,9 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 		}
 	}
 
-	if b.Table != nil {
+	if b.table != nil {
 		buf.WriteString(" FROM ")
-		switch table := b.Table.(type) {
+		switch table := b.table.(type) {
 		case string:
 			buf.WriteString(table)
 		default:
@@ -249,8 +247,8 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 			buf.WriteValue(table)
 		}
 
-		if len(b.JoinTable) > 0 {
-			for _, join := range b.JoinTable {
+		if len(b.joinTables) > 0 {
+			for _, join := range b.joinTables {
 				err := join.Build(buf)
 				if err != nil {
 					return err
@@ -259,17 +257,17 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 		}
 	}
 
-	if len(b.WhereCond) > 0 {
+	if len(b.whereCond) > 0 {
 		buf.WriteString(" WHERE ")
-		err := And(b.WhereCond...).Build(buf)
+		err := And(b.whereCond...).Build(buf)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(b.Group) > 0 {
+	if len(b.group) > 0 {
 		buf.WriteString(" GROUP BY ")
-		for i, group := range b.Group {
+		for i, group := range b.group {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
@@ -280,17 +278,17 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 		}
 	}
 
-	if len(b.HavingCond) > 0 {
+	if len(b.havingCond) > 0 {
 		buf.WriteString(" HAVING ")
-		err := And(b.HavingCond...).Build(buf)
+		err := And(b.havingCond...).Build(buf)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(b.Order) > 0 {
+	if len(b.order) > 0 {
 		buf.WriteString(" ORDER BY ")
-		for i, order := range b.Order {
+		for i, order := range b.order {
 			if i > 0 {
 				buf.WriteString(", ")
 			}
@@ -301,24 +299,14 @@ func (b *SelectBuilder) Build(buf Buffer) error {
 		}
 	}
 
-	if b.LimitCount >= 0 {
+	if b.limitCount >= 0 {
 		buf.WriteString(" LIMIT ")
-		buf.WriteString(strconv.FormatInt(b.LimitCount, 10))
+		buf.WriteString(strconv.FormatInt(b.limitCount, 10))
 	}
 
-	if b.OffsetCount >= 0 {
+	if b.offsetCount >= 0 {
 		buf.WriteString(" OFFSET ")
-		buf.WriteString(strconv.FormatInt(b.OffsetCount, 10))
-	}
-
-	if len(b.Suffixes) > 0 {
-		for _, suffix := range b.Suffixes {
-			buf.WriteString(" ")
-			err := suffix.Build(buf)
-			if err != nil {
-				return err
-			}
-		}
+		buf.WriteString(strconv.FormatInt(b.offsetCount, 10))
 	}
 
 	return nil

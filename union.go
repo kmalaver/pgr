@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 type union struct {
 	builder []Builder

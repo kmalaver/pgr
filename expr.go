@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 type raw struct {
 	Query string

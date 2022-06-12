@@ -1,4 +1,4 @@
-module queryx
+module pgr
 
 go 1.18
 

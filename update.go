@@ -1,39 +1,35 @@
-package queryx
+package pgr
 
 import (
 	"context"
-	"strconv"
 )
 
 type UpdateBuilder struct {
-	runner
+	db *Pgr
 	raw
 
-	Table        string
-	Value        map[string]interface{}
-	WhereCond    []Builder
-	ReturnColumn []string
-	LimitCount   int64
+	table        string
+	value        map[string]interface{}
+	whereCond    []Builder
+	returnColumn []string
 }
 
-func (db queryx) Update(table string) *UpdateBuilder {
+func (db *Pgr) Update(table string) *UpdateBuilder {
 	return &UpdateBuilder{
-		Table:      table,
-		Value:      make(map[string]interface{}),
-		LimitCount: -1,
-		runner:     db,
+		table: table,
+		value: make(map[string]interface{}),
+		db:    db,
 	}
 }
 
-func (db queryx) UpdateSql(query string, value ...interface{}) *UpdateBuilder {
+func (db *Pgr) UpdateSql(query string, value ...interface{}) *UpdateBuilder {
 	return &UpdateBuilder{
 		raw: raw{
 			Query: query,
 			Value: value,
 		},
-		Value:      make(map[string]interface{}),
-		LimitCount: -1,
-		runner:     db,
+		value: make(map[string]interface{}),
+		db:    db,
 	}
 }
 
@@ -42,22 +38,22 @@ func (db queryx) UpdateSql(query string, value ...interface{}) *UpdateBuilder {
 func (b *UpdateBuilder) Where(query interface{}, value ...interface{}) *UpdateBuilder {
 	switch query := query.(type) {
 	case string:
-		b.WhereCond = append(b.WhereCond, Expr(query, value...))
+		b.whereCond = append(b.whereCond, Expr(query, value...))
 	case Builder:
-		b.WhereCond = append(b.WhereCond, query)
+		b.whereCond = append(b.whereCond, query)
 	}
 	return b
 }
 
 // Returning specifies the returning columns for postgres.
 func (b *UpdateBuilder) Returning(column ...string) *UpdateBuilder {
-	b.ReturnColumn = column
+	b.returnColumn = column
 	return b
 }
 
 // Set updates column with value.
 func (b *UpdateBuilder) Set(column string, value interface{}) *UpdateBuilder {
-	b.Value[column] = value
+	b.value[column] = value
 	return b
 }
 
@@ -69,33 +65,12 @@ func (b *UpdateBuilder) SetMap(m map[string]interface{}) *UpdateBuilder {
 	return b
 }
 
-// IncrBy increases column by value
-func (b *UpdateBuilder) IncrBy(column string, value interface{}) *UpdateBuilder {
-	b.Value[column] = Expr("? + ?", I(column), value)
-	return b
-}
-
-// DecrBy decreases column by value
-func (b *UpdateBuilder) DecrBy(column string, value interface{}) *UpdateBuilder {
-	b.Value[column] = Expr("? - ?", I(column), value)
-	return b
-}
-
-func (b *UpdateBuilder) Limit(n uint64) *UpdateBuilder {
-	b.LimitCount = int64(n)
-	return b
-}
-
 func (b *UpdateBuilder) Exec(ctx context.Context) (int64, error) {
-	res, err := exec(ctx, b.runner, b)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected(), nil
+	return b.db.exec(ctx, b)
 }
 
 func (b *UpdateBuilder) Load(ctx context.Context, value interface{}) error {
-	_, err := query(ctx, b.runner, b, value)
+	_, err := b.db.query(ctx, b, value)
 	return err
 }
 
@@ -104,20 +79,20 @@ func (b *UpdateBuilder) Build(buf Buffer) error {
 		return b.raw.Build(buf)
 	}
 
-	if b.Table == "" {
+	if b.table == "" {
 		return ErrTableNotSpecified
 	}
 
-	if len(b.Value) == 0 {
+	if len(b.value) == 0 {
 		return ErrColumnNotSpecified
 	}
 
 	buf.WriteString("UPDATE ")
-	buf.WriteString(QuoteIdent(b.Table))
+	buf.WriteString(QuoteIdent(b.table))
 	buf.WriteString(" SET ")
 
 	i := 0
-	for col, v := range b.Value {
+	for col, v := range b.value {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
@@ -130,27 +105,22 @@ func (b *UpdateBuilder) Build(buf Buffer) error {
 		i++
 	}
 
-	if len(b.WhereCond) > 0 {
+	if len(b.whereCond) > 0 {
 		buf.WriteString(" WHERE ")
-		err := And(b.WhereCond...).Build(buf)
+		err := And(b.whereCond...).Build(buf)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(b.ReturnColumn) > 0 {
+	if len(b.returnColumn) > 0 {
 		buf.WriteString(" RETURNING ")
-		for i, col := range b.ReturnColumn {
+		for i, col := range b.returnColumn {
 			if i > 0 {
 				buf.WriteString(",")
 			}
 			buf.WriteString(QuoteIdent(col))
 		}
-	}
-
-	if b.LimitCount >= 0 {
-		buf.WriteString(" LIMIT ")
-		buf.WriteString(strconv.FormatInt(b.LimitCount, 10))
 	}
 
 	return nil

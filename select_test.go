@@ -1,4 +1,4 @@
-package queryx
+package pgr
 
 import (
 	"context"
@@ -20,22 +20,21 @@ func TestSelectBuilder(t *testing.T) {
 			Distinct().
 			Where(And(
 				Or(Eq("c", 1), Like("c", "cc")),
-				Gte("d", 2),
+				Expr("id in ?", []int64{1, 2, 3}),
 			)).
 			GroupBy("e").
 			Having(Eq("f", 3)).
 			OrderAsc("g").
 			Limit(4).
-			Offset(5).
-			Suffix("FOR UPDATE")
+			Offset(5)
 
 		err := b.Build(buf)
 		require.NoError(t, err)
 		require.Equal(t, `SELECT DISTINCT a, b FROM ? `+
 			`LEFT JOIN "t2" ON t1.a = t2.a `+
-			`WHERE ((("c" = ?) OR ("c" LIKE 'cc')) AND ("d" >= ?)) `+
+			`WHERE ((("c" = ?) OR ("c" LIKE 'cc')) AND (id in ?)) `+
 			`GROUP BY e HAVING ("f" = ?) `+
-			`ORDER BY g ASC LIMIT 4 OFFSET 5 FOR UPDATE`,
+			`ORDER BY g ASC LIMIT 4 OFFSET 5`,
 			buf.String())
 		require.Equal(t, 4, len(buf.Value()))
 	})
