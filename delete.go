@@ -7,6 +7,7 @@ import (
 
 type DeleteBuilder struct {
 	runner runner
+	logger Logger
 	raw
 	Table      string
 	WhereCond  []Builder
@@ -17,7 +18,7 @@ func (db queryx) DeleteFrom(table string) *DeleteBuilder {
 	return &DeleteBuilder{
 		Table:      table,
 		LimitCount: -1,
-		runner:     db.conn,
+		runner:     db,
 	}
 }
 
@@ -28,7 +29,7 @@ func (db queryx) DeleteSql(query string, value ...interface{}) *DeleteBuilder {
 			Value: value,
 		},
 		LimitCount: -1,
-		runner:     db.conn,
+		runner:     db,
 	}
 }
 

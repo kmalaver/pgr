@@ -21,7 +21,7 @@ func (db queryx) Update(table string) *UpdateBuilder {
 		Table:      table,
 		Value:      make(map[string]interface{}),
 		LimitCount: -1,
-		runner:     db.conn,
+		runner:     db,
 	}
 }
 
@@ -33,7 +33,7 @@ func (db queryx) UpdateSql(query string, value ...interface{}) *UpdateBuilder {
 		},
 		Value:      make(map[string]interface{}),
 		LimitCount: -1,
-		runner:     db.conn,
+		runner:     db,
 	}
 }
 

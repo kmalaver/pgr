@@ -17,6 +17,7 @@ type Queryx interface {
 	DeleteFrom(string) *DeleteBuilder
 	DeleteSql(query string, args ...interface{}) *DeleteBuilder
 	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
+	runner
 }
 
 type runner interface {
@@ -26,74 +27,37 @@ type runner interface {
 }
 
 type queryx struct {
-	conn runner
+	runner
+	logger Logger
+}
+
+type Config struct {
+	Logger   Logger
+	LogLevel LogLevel
 }
 
 // creates a new Queryx instance
-func New(conn runner) Queryx {
-	return &queryx{conn: conn}
+func New(runner runner, conf *Config) (Queryx, error) {
+	if conf == nil {
+		conf = &Config{}
+	}
+	if conf.Logger == nil {
+		conf.Logger = &defLogger{
+			level: conf.LogLevel,
+		}
+	}
+	return &queryx{
+		runner: runner,
+		logger: conf.Logger,
+	}, nil
 }
 
-// Creates a new transactionally scoped Queryx instance
-// It will execute all in a transaction and rollback on close
-// Use for testing proposes
-func NewTransactional(conn *pgx.Conn) (Queryx, error) {
-	tx, err := conn.Begin(context.Background())
+func Open(ctx context.Context, connString string, config *Config) (Queryx, error) {
+	conn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
-
-	return &queryx{conn: tx}, nil
+	return New(conn, config)
 }
 
 const placeholder = "?"
-
-func exec(ctx context.Context, conn runner, builder Builder) (pgconn.CommandTag, error) {
-	i := interpolator{
-		Buffer:       NewBuffer(),
-		IgnoreBinary: true,
-	}
-	err := i.encodePlaceholder(builder, true)
-	query, values := i.String(), i.Value()
-	if err != nil {
-		// TODO: send error
-		return nil, err
-	}
-
-	if tx := getTransaction(ctx); tx != nil {
-		return tx.Exec(ctx, query, values...)
-	}
-	return conn.Exec(ctx, query, values...)
-}
-
-func queryRows(ctx context.Context, conn runner, builder Builder) (pgx.Rows, error) {
-	i := interpolator{
-		Buffer:       NewBuffer(),
-		IgnoreBinary: true,
-	}
-	err := i.encodePlaceholder(builder, true)
-	query, values := i.String(), i.Value()
-	if err != nil {
-		// TODO: send error
-		return nil, err
-	}
-	if tx := getTransaction(ctx); tx != nil {
-		return tx.Query(ctx, query, values...)
-	}
-	return conn.Query(ctx, query, values...)
-}
-
-func query(ctx context.Context, conn runner, builder Builder, dest interface{}) (int, error) {
-
-	rows, err := queryRows(ctx, conn, builder)
-	if err != nil {
-		return 0, err
-	}
-	// err = pgxscan.ScanAll(dest, rows)
-
-	count, err := Load(rows, dest)
-	if err != nil {
-		return 0, err
-	}
-	return count, err
-}

@@ -9,6 +9,7 @@ import (
 
 type SelectBuilder struct {
 	runner runner
+	logger Logger
 	raw
 
 	IsDistinct bool
@@ -35,17 +36,19 @@ func prepareSelect(a []string) []interface{} {
 	return b
 }
 
-func Select(cols ...string) *SelectBuilder {
+// Select creates a SelectBuilder.
+func Select(cols ...interface{}) *SelectBuilder {
 	return &SelectBuilder{
-		Column:      prepareSelect(cols),
+		Column:      cols,
 		LimitCount:  -1,
 		OffsetCount: -1,
 	}
 }
 
 func (db *queryx) Select(cols ...string) *SelectBuilder {
-	b := Select(cols...)
-	b.runner = db.conn
+	b := Select(prepareSelect(cols)...)
+	b.runner = db
+	b.logger = db.logger
 	return b
 }
 
@@ -57,7 +60,8 @@ func (db *queryx) SelectSql(query string, value ...interface{}) *SelectBuilder {
 		},
 		LimitCount:  -1,
 		OffsetCount: -1,
-		runner:      db.conn,
+		runner:      db,
+		logger:      db.logger,
 	}
 }
 
@@ -188,11 +192,12 @@ func (b *SelectBuilder) As(alias string) Builder {
 }
 
 func (b *SelectBuilder) Rows(ctx context.Context) (pgx.Rows, error) {
-	return queryRows(ctx, b.runner, b)
+	_, rows, err := queryRows(ctx, b.runner, b, b.logger)
+	return rows, err
 }
 
 func (b *SelectBuilder) LoadOne(ctx context.Context, value interface{}) error {
-	count, err := query(ctx, b.runner, b, value)
+	count, err := query(ctx, b.runner, b, value, b.logger)
 	if err != nil {
 		return err
 	}
@@ -203,7 +208,7 @@ func (b *SelectBuilder) LoadOne(ctx context.Context, value interface{}) error {
 }
 
 func (b *SelectBuilder) Load(ctx context.Context, value interface{}) (int, error) {
-	return query(ctx, b.runner, b, value)
+	return query(ctx, b.runner, b, value, b.logger)
 }
 
 func (b *SelectBuilder) Build(buf Buffer) error {

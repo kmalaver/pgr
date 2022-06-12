@@ -19,7 +19,7 @@ type InsertBuilder struct {
 func (db queryx) InsertInto(table string) *InsertBuilder {
 	return &InsertBuilder{
 		Table:  table,
-		runner: db.conn,
+		runner: db,
 	}
 }
 
@@ -29,7 +29,7 @@ func (db queryx) InsertSql(query string, value ...interface{}) *InsertBuilder {
 			Query: query,
 			Value: value,
 		},
-		runner: db.conn,
+		runner: db,
 	}
 }
 
@@ -61,12 +61,34 @@ func (b *InsertBuilder) Returning(columns ...string) *InsertBuilder {
 	return b
 }
 
+// If there is a field called "Id" or "ID" in the struct,
+// it will be set to LastInsertId.
+//
+// If no Columns are specified, the columns will be set by the
+// struct fields excluding non exported fields.
 func (b *InsertBuilder) Record(record interface{}) *InsertBuilder {
 	v := reflect.Indirect(reflect.ValueOf(record))
 
 	if v.Kind() == reflect.Struct {
-		found := make([]interface{}, len(b.Column)+1)
 		s := newTagStore()
+
+		// We still have no columns specified
+		// Use the struct fields excluding non exported fields
+		if len(b.Column) == 0 {
+			fields := s.get(v.Type())
+			for i, field := range fields {
+				if field == "id" {
+					if idField := v.Field(i); idField.IsZero() {
+						continue
+					}
+				}
+				if field != "" {
+					b.Column = append(b.Column, field)
+				}
+			}
+		}
+
+		found := make([]interface{}, len(b.Column)+1)
 		s.findValueByName(v, append(b.Column, "id"), found, false)
 
 		value := found[:len(found)-1]
